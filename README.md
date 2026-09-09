@@ -2,6 +2,23 @@
 
 An in-game automation companion for **SilkroadWeb / Jadeway**. Configure combat, training, town errands, equipment, travel and party support from a panel while watching your character play.
 
+![JadeRunner's skill rotation and weapon assignment panel](screenshots/skills.png)
+
+*Browser-rendered previews of the public release using sanitized Test1234 settings and illustrative character/inventory data. No account login or credentials are included.*
+
+<details>
+<summary>More screenshots: buffs, healing and town supplies</summary>
+
+**Buffs and healing skills with individual weapon assignments**
+
+![JadeRunner's buff and healing skill configuration](screenshots/buffs.png)
+
+**Town errands, supply thresholds and teleport options**
+
+![JadeRunner's town restocking and teleport configuration](screenshots/town.png)
+
+</details>
+
 JadeRunner runs through the browser game's existing session. This release is a single **Tampermonkey userscript**: no Node.js installation, terminal commands, separate bot account or build step is needed.
 
 **[Open the userscript](jaderunner.user.js)** · **F9** opens the panel.
