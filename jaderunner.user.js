@@ -5539,11 +5539,16 @@ function questAutomation(config, state, ctx) {
     p.append(head, vitals, doing, actRow, statsBar, tabbar, body, logs, tip);
 
     let drag = null;
-    // Anything actually clickable/interactive — never starts a drag, so its own click/hover/native-drag still works.
-    // Everything else, including the tab content and the log panel, is now a valid drag surface.
-    const NO_DRAG_EL = 'button, input, select, textarea, a[href], [draggable="true"], canvas, .srb-tab, .srb-selbtn, .srb-switch, .srb-x, .srb-dots, .srb-logf, .srb-cfgbtn, .srb-scalebtn, .srb-loghead';
+    // Native controls that need their own default pointer behavior (typing, text-cursor placement, canvas
+    // pan) rather than a click handler — always excluded regardless of the onclick walk below.
+    const NO_DRAG_TAG = 'button, input, select, textarea, a[href], [draggable="true"], canvas';
+    // Everything else: if the click target or any ancestor up to the panel itself has a click handler
+    // wired up (every custom control here — tabs, dropdown options, filter chips, switches, etc. — uses
+    // el.onclick, never addEventListener), it's interactive and shouldn't start a drag. This is what
+    // actually generalizes instead of hand-maintaining a class list that silently misses new controls.
+    const hasClickHandler = (el) => { for (let n = el; n && n !== p; n = n.parentElement) if (n.onclick) return true; return false; };
     p.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(NO_DRAG_EL)) return;
+      if (e.target.closest(NO_DRAG_TAG) || hasClickHandler(e.target)) return;
       drag = [e.clientX - p.offsetLeft, e.clientY - p.offsetTop];
       p.setPointerCapture?.(e.pointerId);
     });
