@@ -410,6 +410,8 @@ const combatBusy = W => {
   return true;
 };
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
 const combatTargetClear = (W, nav, e) => {
   if (!e || W.isUnreach(e.id)) return false;
   if (Date.now() - (e.aggroAt ?? 0) < 9000) return true; // already engaged — don't reject over a momentary LoS blip
@@ -435,6 +437,12 @@ const recoverBlockedApproach = (W, nav, send) => {
   log(`attack approach stalled at ${e.name??e.id} for 5s - skipping this target for 60s`);
   send('move.stop',{});
 };
+=======
+const combatTargetClear = (W, nav, e) => !!e && !W.isUnreach(e.id);
+>>>>>>> Stashed changes
+=======
+const combatTargetClear = (W, nav, e) => !!e && !W.isUnreach(e.id);
+>>>>>>> Stashed changes
 const rollScore = (stack, type, intBuild) => {
   const groups = ROLL_GROUPS[type], def = EQUIPMENT_STATS[stack?.itemId];
 
@@ -2877,7 +2885,15 @@ function questAutomation(config, state, ctx) {
       const rank = e => { if (aggro(e)) return 0;
         const near = this.dist(p, e);
         const hitRecently = now - (e.hitByMe ?? 0) < 8000 && near <= HITBYME_RANGE_U;
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
         const nearKill = B.lastKillPos && now - B.lastKillPos.at < NEAR_KILL_WINDOW_MS && this.dist(B.lastKillPos, e) <= NEAR_KILL_RANGE_U;
+=======
+        const nearKill = this.lastKillPos && now - this.lastKillPos.at < NEAR_KILL_WINDOW_MS && this.dist(this.lastKillPos, e) <= NEAR_KILL_RANGE_U;
+>>>>>>> Stashed changes
+=======
+        const nearKill = this.lastKillPos && now - this.lastKillPos.at < NEAR_KILL_WINDOW_MS && this.dist(this.lastKillPos, e) <= NEAR_KILL_RANGE_U;
+>>>>>>> Stashed changes
         return (hitRecently || nearKill) ? 1 : (now - (e._seen ?? 0) < 20000 ? 2 : 3); };
       return all.sort((a, b) => rank(a) - rank(b) || this.dist(p, a) - this.dist(p, b)); }
     loot_() { const p = this.selfPos(); return p ? [...this.entities.values()].filter(e => e.kind === "ground_item" && this.dist(p, e) <= ai.lootRadius) : []; }
@@ -2922,7 +2938,13 @@ function questAutomation(config, state, ctx) {
     let appr = null;
     let errand = null;
     let errandTrack = null;
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
     let lootTrack = null;
+=======
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
     let combatTrack = null; // {id, hp, at, tries} — damage-progress tracking for the current combat target
 
     const LOOT_REACH_U = 3;
@@ -3593,8 +3615,63 @@ function questAutomation(config, state, ctx) {
     const PENNED_R_U = 18;
     const PENNED_FORGET_MS = 45000;
     const PENNED_MS = 20000;
+    // Fast "am I actually moving" detector — a direct displacement signal, faster and more reliable than
+    // inferring stuck-ness from distance-to-goal alone (which can plateau for reasons other than being
+    // physically blocked). Pattern and rough parameters follow established game-nav practice (OpenMW's
+    // AiWander stuck-check: ~1.8u/1.0s; here scaled up since this game's distances run larger).
+    const STUCK_CHECK_MS = 1000, STUCK_NET_U = 2.5, STUCK_CONFIRM_MS = 1200;
+    const MOVE = Object.freeze({ MOVING: "moving", ARRIVED: "arrived", RECOVERING: "recovering", FAILED: "failed" });
+    const NAV_MEMORY_CELL_U = 16, NAV_MEMORY_TTL_MS = 120000, NAV_MEMORY_LIMIT = 80;
     const ESCAPE_CLIMB_COST = 3;
     const ESCAPE_STEP_MAX_U = 25;
+    const navMemoryKey = (zoneId, x, z) => `${zoneId}:${Math.round(x / NAV_MEMORY_CELL_U)},${Math.round(z / NAV_MEMORY_CELL_U)}`;
+    const pruneNavMemory = (now = Date.now()) => {
+      const memory = B.navMemory ??= new Map();
+      for (const [key, row] of memory) if (row.expiresAt <= now) memory.delete(key);
+      while (memory.size > NAV_MEMORY_LIMIT) memory.delete(memory.keys().next().value);
+      return memory;
+    };
+    const navMemoryPenalty = (zoneId, x, z, now = Date.now()) => {
+      let penalty = 0;
+      for (const row of pruneNavMemory(now).values()) {
+        if (row.zoneId !== zoneId) continue;
+        const d = Math.hypot(row.x - x, row.z - z);
+        if (d < row.radius) penalty += row.confidence * (1 - d / row.radius) * 80;
+      }
+      return penalty;
+    };
+    const observeNavObstacle = (p, goal, ray, source, strong = false) => {
+      if (!ray?.hit || !Number.isFinite(ray.d)) return;
+      const zoneId = window.__SRB_NAV?.zoneId;
+      if (!zoneId) return;
+      const d = Math.max(2, ray.d), dx = goal.x - p.x, dz = goal.z - p.z, len = Math.hypot(dx, dz) || 1;
+      const x = p.x + dx / len * d, z = p.z + dz / len * d, now = Date.now();
+      const memory = pruneNavMemory(now), key = navMemoryKey(zoneId, x, z);
+      const row = memory.get(key) ?? { zoneId, x, z, radius: Math.max(8, Math.min(24, d * .25)), confidence: 0, hits: 0, firstSeenAt: now };
+      row.hits++; row.confidence = Math.min(4, row.confidence + (strong ? 1 : .35)); row.lastSeenAt = now;
+      row.expiresAt = now + NAV_MEMORY_TTL_MS; row.source = source;
+      memory.delete(key); memory.set(key, row);
+      if (strong && th(`navObstacle:${key}`, 5000)) log(`nav obstacle strengthened at ${x.toFixed(0)},${z.toFixed(0)} (${source}, confidence ${row.confidence.toFixed(1)})`);
+    };
+    const rewardNavPass = (p, now = Date.now()) => {
+      const memory = pruneNavMemory(now), zoneId = window.__SRB_NAV?.zoneId;
+      for (const [key, row] of memory) {
+        if (row.zoneId !== zoneId || Math.hypot(row.x - p.x, row.z - p.z) > row.radius) continue;
+        row.confidence -= .75;
+        if (row.confidence <= 0) memory.delete(key);
+      }
+    };
+    const movementGoal = (goal, p, now) => {
+      const zoneId = goal.zoneId ?? window.__SRB_NAV?.zoneId ?? "";
+      const kind = goal.kind ?? "move", id = goal.id ?? `${Math.round(goal.x)},${Math.round(goal.z)}`;
+      const key = `${zoneId}:${kind}:${id}`;
+      let state = B.navigationGoal;
+      if (!state || state.key !== key || Math.hypot(state.x - goal.x, state.z - goal.z) > 12) {
+        state = B.navigationGoal = { key, kind, id, zoneId, x: goal.x, z: goal.z, startedAt: now, lastProgressAt: now, best: Math.hypot(goal.x - p.x, goal.z - p.z), recoveryAttempts: 0, status: MOVE.MOVING };
+        log(`nav goal ${kind}:${id} -> ${goal.x.toFixed(0)},${goal.z.toFixed(0)}`);
+      }
+      return state;
+    };
     const steerFallback = (goal, p) => {
       const navObj = window.__SRB_NAV?.nav;
       const now = Date.now();
@@ -3669,15 +3746,6 @@ function questAutomation(config, state, ctx) {
           else if (!inPen) {   }
           else if ((pen.seen = now) && now - pen.t0 > PENNED_MS && now - (pen.actedAt ?? 0) > 8000) {
             pen.actedAt = now; pen.burst = (pen.burst ?? 0) + 1;
-            if (pen.burst >= 2 && now - (B.bailAt ?? 0) > 120000 && !world.dead && !world.returning) {
-
-              B.bailAt = now; B.penned = null; B.travel = null; plan = null; steer = null;
-              log(`penned in a ${PENNED_R_U}u circle for ${Math.round((now - pen.t0) / 1000)}s — recalling to town and starting the walk over`);
-              send("return.start", {});
-              world.returning = true; world.returningSince = now;
-              return true;
-            }
-
             let bestOut = null;
             for (let a = 0; a < 24; a++) {
               const ang2 = a * Math.PI / 12;
@@ -3711,7 +3779,7 @@ function questAutomation(config, state, ctx) {
               if (now - c.t < 3000) continue;
               if (Math.hypot(ex - c.x, ez - c.z) < TRAIL_NEAR_U) { trailPen = TRAIL_COST; break; }
             }
-            const score = Math.hypot(goal.x - ex, goal.z - ez) + (r.hit ? 3 : 0) + climb * ESCAPE_CLIMB_COST + trailPen;
+            const score = Math.hypot(goal.x - ex, goal.z - ez) + (r.hit ? 3 : 0) + climb * ESCAPE_CLIMB_COST + trailPen + navMemoryPenalty(window.__SRB_NAV?.zoneId, ex, ez, now);
             const cand = { score, ang, d: r.d, hit: r.hit };
             if (!bestAny || r.d > bestAny.d) bestAny = cand;
 
@@ -3748,6 +3816,7 @@ function questAutomation(config, state, ctx) {
             (window.__SRB_SRC = "escape"), send("move.click", { x: +(p.x + Math.cos(chosen.ang) * go).toFixed(2), z: +(p.z + Math.sin(chosen.ang) * go).toFixed(2) });
 
             navObj.addVirtual(p.x + Math.cos(base) * direct.d, p.z + Math.sin(base) * direct.d, 3, 30000, p.x, p.z);
+            observeNavObstacle(p, goal, direct, "fallback", steer.tries >= 2);
           }
         }
         return true;
@@ -3791,10 +3860,45 @@ function questAutomation(config, state, ctx) {
       return null;
     };
 
+    // Net displacement over the last STUCK_CHECK_MS, sampled each drive() call. reallyStuckMs() returns how
+    // long net movement has stayed under STUCK_NET_U — a direct "is this actually moving" signal, distinct
+    // from (and faster than) the various per-activity distance-to-goal timers that consume it below.
+    const updateStuckTrack = (p, now) => {
+      const s = (B.stuckTrack ??= { x: p.x, z: p.z, t: now, stuckSince: null });
+      if (now - s.t < STUCK_CHECK_MS) return;
+      const moved = Math.hypot(p.x - s.x, p.z - s.z);
+      if (moved < STUCK_NET_U) { if (!s.stuckSince) s.stuckSince = s.t; }
+      else s.stuckSince = null;
+      s.x = p.x; s.z = p.z; s.t = now;
+    };
+    const reallyStuckMs = () => { const s = B.stuckTrack; return s?.stuckSince ? Date.now() - s.stuckSince : 0; };
+
     const drive = (goal) => {
       const navObj = window.__SRB_NAV?.nav; const p = world.selfPos();
-      if (!navObj || !p) return false;
+      if (!navObj || !p) return MOVE.FAILED;
       const now = Date.now();
+      updateStuckTrack(p, now);
+      const motion = movementGoal(goal, p, now);
+      if (motion.status === MOVE.FAILED) return MOVE.FAILED;
+      const dNow = Math.hypot(goal.x - p.x, goal.z - p.z);
+      if (dNow <= (goal.arriveU ?? 4)) { motion.status = MOVE.ARRIVED; motion.recoveryAttempts = 0; return MOVE.ARRIVED; }
+      if (dNow < motion.best - 2.5) {
+        motion.best = dNow; motion.lastProgressAt = now; motion.recoveryAttempts = 0; motion.status = MOVE.MOVING; rewardNavPass(p, now);
+      }
+      if (reallyStuckMs() >= STUCK_CONFIRM_MS && now - motion.startedAt > STUCK_CONFIRM_MS && now - (motion.lastRecoveryAt ?? 0) > STUCK_CONFIRM_MS) {
+        const ray = navObj.ray?.(p.x, p.z, goal.x - p.x, goal.z - p.z, Math.min(dNow, ESCAPE_PROBE_U), p.y, false);
+        motion.lastRecoveryAt = now; motion.recoveryAttempts++; motion.status = MOVE.RECOVERING;
+        observeNavObstacle(p, goal, ray, "no-progress", motion.recoveryAttempts > 1);
+        dropPlan("navStuck"); B.steerHold = 0;
+        log(`nav stuck ${motion.kind}:${motion.id} for ${(reallyStuckMs() / 1000).toFixed(1)}s — recovery ${motion.recoveryAttempts}`);
+        if (motion.recoveryAttempts >= 5) {
+          motion.status = MOVE.FAILED; motion.failedAt = now;
+          log(`nav goal skipped ${motion.kind}:${motion.id} after local recovery exhausted`);
+          return MOVE.FAILED;
+        }
+        steerFallback(goal, p);
+        return MOVE.RECOVERING;
+      }
 
       {
         const pen = B.penned;
@@ -3822,11 +3926,11 @@ function questAutomation(config, state, ctx) {
       } else B.travel = null;
 
       const penNow = B.penned;
-      if (penNow && now - penNow.t0 > 30000 && now - (B.bailAt ?? 0) > 120000 && !world.dead && !world.returning
+      if (penNow && now - penNow.t0 > 50000 && now - (B.bailAt ?? 0) > 120000 && !world.dead && !world.returning
           && !(world.aggroed?.().length)
           && !navObj.walkableRaw?.(p.x, p.z)) {
         B.bailAt = now; B.penned = null; B.travel = null; dropPlan("unstickPenned"); steer = null;
-        log(`stuck inside geometry at ${p.x.toFixed(1)},${p.z.toFixed(1)} for ${Math.round((now - penNow.t0) / 1000)}s — recalling to town and starting the walk over · routes ${JSON.stringify(window.__SRB_PLANLOG ?? {})}`);
+        log(`stuck inside geometry at ${p.x.toFixed(1)},${p.z.toFixed(1)} for ${Math.round((now - penNow.t0) / 1000)}s (no real movement for ${(reallyStuckMs() / 1000).toFixed(1)}s) — recalling to town and starting the walk over · routes ${JSON.stringify(window.__SRB_PLANLOG ?? {})}`);
         send("return.start", {});
         world.returning = true; world.returningSince = now;
         return true;
@@ -3985,7 +4089,15 @@ function questAutomation(config, state, ctx) {
     };
 
     const resetRoute = () => {
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
       dropPlan("relocation"); steer = null; gotoTrack = null; appr = null; lootTrack = null; errandTrack = null; combatTrack = null;
+=======
+      dropPlan("relocation"); steer = null; gotoTrack = null; appr = null; errandTrack = null; combatTrack = null;
+>>>>>>> Stashed changes
+=======
+      dropPlan("relocation"); steer = null; gotoTrack = null; appr = null; errandTrack = null; combatTrack = null;
+>>>>>>> Stashed changes
       B.travel = null; B.penned = null; B.steerHold = 0; B.lastLongPathTry = 0; B.homeBest = Infinity; B.homeBestAt = 0;
       world.lastClick = null; world.lastUserMove = 0; world.targetId = null; B.tgtSet = null;
       B.uiTarget = uiSelect(null) ? null : undefined;
@@ -4003,6 +4115,19 @@ function questAutomation(config, state, ctx) {
     };
     const send = (t, d) => { const sock = window.__SRB_SOCK; if (sock?.readyState !== 1) return null; if (t === "combat.attack") world.lastClick = null; if (t === "move.click") world.lastClick = { x: d.x, z: d.z, at: Date.now() }; const qq = (q += 2); pending.set(qq, { name: t, d, at: Date.now() }); if (t === "skill.cast") world.pendingSkill = { q: qq, groupId: d.groupId, targetId: d.targetId, until: Date.now() + 17000 }; if (["taction.teleport", "return.start", "teleport.use", "respawn.request"].includes(t)) resetRoute(); if (t === "taction.teleport" && (d.presetId === "last_death" || deathTpPending?.presetId === d.presetId)) { world.deathLanding = true; world.arrivalDeadline = Date.now() + 17000; window.__SRB_GOTO.goal = null; window.__SRB_JOURNEY = null; } if (t === "skill.cast" && d.targetId != null && d.targetId !== world.selfId && !["buff", "heal", "dance", "revive"].includes(BUFF_META[d.groupId]?.kind)) { world.lastClick = null; world.combatCast = { q: qq, groupId: d.groupId, targetId: d.targetId, until: Date.now() + 17000 }; } sock.send(JSON.stringify({ t, d, q: qq })); return qq; };
     const th = (k, ms) => { const n = Date.now(); if ((last[k] ?? -1e12) + ms > n) return false; last[k] = n; return true; };
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+=======
+>>>>>>> Stashed changes
+    const pruneExpiredMaps = () => {
+      const now = Date.now();
+      for (const [k, exp] of world.unreach) if (exp <= now) world.unreach.delete(k);
+      for (const [k, exp] of gatherSkip) if (exp <= now) gatherSkip.delete(k);
+      if (B.eqFail) for (const [k, exp] of B.eqFail) if (exp <= now) B.eqFail.delete(k);
+      pruneNavMemory(now);
+    };
+>>>>>>> Stashed changes
 
     const reachU = () => { const eq = world.self?.inventory?.equip?.weapon?.itemId;
       return (eq ? WEAPON_REACH_U[itemMeta(eq)?.weaponType] : null) ?? BARE_REACH_U; };
@@ -4372,7 +4497,15 @@ function questAutomation(config, state, ctx) {
         }
         break;
       case "combat.death": { const e = W.entities.get(d.id); if (e) e.dead = true; if (d.id === W.selfId) { rememberDeath(ai,W.self,W.selfPos(),window.__SRB_NAV?.zoneId); if (!W.dead) { recordCampDeath(ai, ai.trainPos ?? B.home, window.__SRB_NAV?.zoneId, W.entities.get(d.killerId) ?? W.entities.get(W.targetId)); saveProfile(); } W.dead = true; W.supportUntil = {}; if (B.trainObs) B.trainObs.deaths = ai.trainUp?.deathCamp?.deaths ?? (B.trainObs.deaths ?? 0) + 1; log("died"); } else { if (d.killerId === W.selfId) { stats.kills++;
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
           if (e) B.lastKillPos = { x: e.x, z: e.z, at: Date.now() };
+=======
+          if (e) W.lastKillPos = { x: e.x, z: e.z, at: Date.now() };
+>>>>>>> Stashed changes
+=======
+          if (e) W.lastKillPos = { x: e.x, z: e.z, at: Date.now() };
+>>>>>>> Stashed changes
           if (ai.trainUp?.enabled && e) { const mid = mobIdOf(window.__SRB_NAV?.zoneId, e); if (mid) trainObs(mid).kills++; } }
         if (d.id === W.targetId) W.targetId = null; } break; }
 
@@ -4527,7 +4660,6 @@ function questAutomation(config, state, ctx) {
             || (!W.targetId && Date.now() - (B.lastCombat ?? 0) > 4000 && th("questSupplies", 3000)))
           && errands()) return;
       if (!passive && questTeleportTick()) return;
-      recoverBlockedApproach(W, window.__SRB_NAV?.nav, send);
       if (!passive && questHuntTick(p)) return;
       if (skillBusy(W)) { B._where = "waiting for queued skill or cast windup"; return; }
       if (Date.now() < (W.partyGearUntil ?? 0)) { B._where = "preparing party buff equipment"; return; }
@@ -4858,21 +4990,14 @@ function questAutomation(config, state, ctx) {
         if (L.length) {
           const l = L[0], dl = W.dist(p, l);
           if (dl > LOOT_REACH_U) {
-
-            const tNow = Date.now(), tr = (lootTrack ??= { id: null, best: Infinity, t0: 0, tries: 0 });
-            if (tr.id !== l.id) { tr.id = l.id; tr.best = dl; tr.t0 = tNow; tr.tries = 0; }
-            else if (dl < tr.best - 2) { tr.best = dl; tr.t0 = tNow; }
-            else if (tNow - tr.t0 > 6000) {
-              tr.t0 = tNow;
-              if (++tr.tries >= 3) { W.markUnreach(l.id, 300000); log(`loot: cannot reach ${l.itemId ?? "gold"} after 3 tries — leaving it`); tr.id = null; return; }
-
-              const near = window.__SRB_NAV?.nav?.snap?.(l.x, l.z, LOOT_REACH_U);
-              if (near && Math.hypot(near.x - l.x, near.z - l.z) <= LOOT_REACH_U) { log(`loot: ${l.itemId ?? "gold"} is not directly reachable — approaching the nearest standable spot in range`); send("move.click", { x: +near.x.toFixed(2), z: +near.z.toFixed(2) }); return; }
-              W.markUnreach(l.id, 300000); log(`loot: nowhere to stand within ${LOOT_REACH_U}u of ${l.itemId ?? "gold"} — leaving it`); tr.id = null; return;
+            const near = window.__SRB_NAV?.nav?.snap?.(l.x, l.z, LOOT_REACH_U);
+            if (!near || Math.hypot(near.x - l.x, near.z - l.z) > LOOT_REACH_U) {
+              W.markUnreach(l.id, 300000); log(`loot: nowhere to stand within ${LOOT_REACH_U}u of ${l.itemId ?? "gold"} — leaving it`); return;
             }
-            if (!drive({ x: l.x, z: l.z }) && th("lootWalk", 900)) send("move.click", { x: l.x, z: l.z });
+            const move = drive({ kind: "loot", id: l.id, x: near.x, z: near.z, arriveU: 2 });
+            if (move === MOVE.FAILED) { W.markUnreach(l.id, 300000); log(`loot: cannot reach ${l.itemId ?? "gold"} — leaving it`); }
           }
-          else if (th("loot", 600)) { lootTrack = null; log("loot:", l.itemId ?? "gold", "×" + (l.qty ?? 1)); send("loot.pickup", { id: l.id }); }
+          else if (th("loot", 600)) { log("loot:", l.itemId ?? "gold", "×" + (l.qty ?? 1)); send("loot.pickup", { id: l.id }); }
           return;
         }
       }
@@ -4942,11 +5067,25 @@ function questAutomation(config, state, ctx) {
 
         if (combatTrack?.id !== tg.id) combatTrack = { id: tg.id, hp: tg.hp ?? null, at: Date.now(), tries: 0 };
         else if (tg.hp != null && combatTrack.hp != null && tg.hp < combatTrack.hp) { combatTrack.hp = tg.hp; combatTrack.at = Date.now(); combatTrack.tries = 0; }
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
         else if (Date.now() - combatTrack.at > 6000) {
           combatTrack.at = Date.now();
           if (++combatTrack.tries >= 3) {
             W.markUnreach(tg.id, 15000);
             log(`combat: no damage landing on ${tg.name} ${tg.id} for ~18s — likely blocked or unreachable, dropping it for 15s`);
+=======
+=======
+>>>>>>> Stashed changes
+        else if (Date.now() - combatTrack.at > 3500) {
+          combatTrack.at = Date.now();
+          if (++combatTrack.tries >= 2) {
+            W.markUnreach(tg.id, 15000);
+            log(`combat: no damage landing on ${tg.name} ${tg.id} for ~7s — likely blocked or unreachable, dropping it for 15s`);
+<<<<<<< Updated upstream
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes
             dropTarget("stuckNoDamage");
             return;
           }
@@ -4957,6 +5096,16 @@ function questAutomation(config, state, ctx) {
           if (th("defend", 4000)) log("low hp " + hpNow.toFixed(0) + "% — backing off until " + ai.defendHp + "%");
           const dd = Math.max(d, 0.001), away = { x: p.x + (p.x - tg.x) / dd * 40, z: p.z + (p.z - tg.z) / dd * 40 };
           if (!drive(away) && th("defendMove", 800)) send("move.click", { x: +away.x.toFixed(2), z: +away.z.toFixed(2) });
+          return;
+        }
+        const attackReach = Math.max(reachU(), ...ai.skills.map(skReachOf).filter(Number.isFinite));
+        if (d > attackReach) {
+          const move = drive({ kind: "combat", id: tg.id, x: tg.x, z: tg.z, arriveU: Math.max(2, attackReach - 1) });
+          if (move === MOVE.FAILED) {
+            W.markUnreach(tg.id, 60000);
+            log(`combat: cannot reach ${tg.name ?? tg.id} — skipping it for 60s`);
+            dropTarget("navFailed");
+          }
           return;
         }
         const homeHere = (window.__SRB_HOME && window.__SRB_HOME.zoneId === window.__SRB_NAV?.zoneId) ? window.__SRB_HOME : null;
@@ -5029,6 +5178,13 @@ function questAutomation(config, state, ctx) {
     B.resync = (why) => resyncPos(why ?? "manual");
     B._onResync = () => { plan = null; steer = null; };
     B.lastSwitch = 0; B._plan = () => plan; B._errand = () => errandReturn; B._steer = () => steer; B._equip = () => equipCandidate(); B._autoEquip = () => autoEquip(); B._trainUp = (z, self, obs, cfg) => trainUpPick(z, self, obs, cfg);
+    Object.defineProperty(window, "__SRB_NAVDEBUG", { configurable: true, get: () => {
+      const goal = B.navigationGoal, memory = pruneNavMemory();
+      return { zone: window.__SRB_NAV?.zoneId ?? null, currentGoal: goal ? { kind: goal.kind, id: goal.id, x: goal.x, z: goal.z } : null,
+        movementStatus: goal?.status ?? null, stuckMs: reallyStuckMs(), recoveryAttempts: goal?.recoveryAttempts ?? 0,
+        memoryCount: memory.size, nearestLearnedObstacle: [...memory.values()].sort((a, b) => (b.lastSeenAt ?? 0) - (a.lastSeenAt ?? 0))[0] ?? null,
+        lastFailureReason: goal?.status === MOVE.FAILED ? "recovery-exhausted" : null };
+    } });
     return B;
   }
 
